@@ -60,13 +60,16 @@ renderer.autoClear=false;
 renderer.toneMapping=THREE.NoToneMapping;
 document.body.appendChild(renderer.domElement);
 
-// ── Sky scene (no fog, renders behind main scene) ──────────────
+// ══════════════════════════════════════════════════════════════
+// SKY SCENE (no fog — stars always visible)
+// ══════════════════════════════════════════════════════════════
 const skyScene=new THREE.Scene();
-const skyCam=new THREE.PerspectiveCamera(70,innerWidth/innerHeight,0.1,2000);
+const skyCam=new THREE.PerspectiveCamera(55,innerWidth/innerHeight,0.1,3000);
 
-// Gradient sky dome (vertex colours)
-const skyGeo=new THREE.SphereGeometry(900,32,16);
-const skyDome=new THREE.Mesh(skyGeo,new THREE.MeshBasicMaterial({side:THREE.BackSide,vertexColors:true}));
+// Sky dome with vertex colours
+const skyGeo=new THREE.SphereGeometry(1200,32,20);
+const skyDome=new THREE.Mesh(skyGeo,
+  new THREE.MeshBasicMaterial({side:THREE.BackSide,vertexColors:true}));
 skyScene.add(skyDome);
 
 function buildSky(topH,midH,botH){
@@ -74,7 +77,7 @@ function buildSky(topH,midH,botH){
   const n=pos.count,c=new Float32Array(n*3);
   const cT=new THREE.Color(topH),cM=new THREE.Color(midH),cB=new THREE.Color(botH);
   for(let i=0;i<n;i++){
-    const y=Math.max(-1,Math.min(1,pos.getY(i)/900));
+    const y=Math.max(-1,Math.min(1,pos.getY(i)/1200));
     const col=y>=0?cM.clone().lerp(cT,y):cM.clone().lerp(cB,-y);
     c[i*3]=col.r;c[i*3+1]=col.g;c[i*3+2]=col.b;
   }
@@ -82,39 +85,66 @@ function buildSky(topH,midH,botH){
   geo.attributes.color.needsUpdate=true;
 }
 
-// Stars
-const starN=1500,sP=new Float32Array(starN*3);
+// Stars — hemisphere, varied sizes
+const starN=1800,sPos=new Float32Array(starN*3),sSz=new Float32Array(starN);
 for(let i=0;i<starN;i++){
-  const th=Math.random()*Math.PI*2,ph=Math.random()*Math.PI*.48,r=800;
-  sP[i*3]=r*Math.sin(ph)*Math.cos(th);
-  sP[i*3+1]=r*Math.cos(ph)+30;
-  sP[i*3+2]=r*Math.sin(ph)*Math.sin(th);
+  const th=Math.random()*Math.PI*2,ph=Math.random()*Math.PI*0.50,r=1000;
+  sPos[i*3  ]=r*Math.sin(ph)*Math.cos(th);
+  sPos[i*3+1]=r*Math.cos(ph)+40;
+  sPos[i*3+2]=r*Math.sin(ph)*Math.sin(th);
+  sSz[i]=2.0+Math.random()*5.0;
 }
 const starGeo=new THREE.BufferGeometry();
-starGeo.setAttribute('position',new THREE.BufferAttribute(sP,3));
-const starMat=new THREE.PointsMaterial({color:0xEEEEFF,size:4.5,transparent:true,opacity:0,sizeAttenuation:true});
+starGeo.setAttribute('position',new THREE.BufferAttribute(sPos,3));
+starGeo.setAttribute('size',new THREE.BufferAttribute(sSz,1));
+// Use ShaderMaterial so each star has its own size
+const starMat=new THREE.ShaderMaterial({
+  uniforms:{opacity:{value:0},baseColor:{value:new THREE.Color(0xEEEEFF)}},
+  vertexShader:`
+    attribute float size;
+    void main(){
+      gl_PointSize=size;
+      gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);
+    }`,
+  fragmentShader:`
+    uniform float opacity;
+    uniform vec3 baseColor;
+    void main(){
+      vec2 uv=gl_PointCoord-0.5;
+      float r=length(uv);
+      if(r>0.5)discard;
+      float a=smoothstep(0.5,0.2,r)*opacity;
+      gl_FragColor=vec4(baseColor,a);
+    }`,
+  transparent:true,depthWrite:false
+});
 skyScene.add(new THREE.Points(starGeo,starMat));
 
-// Moon
+// Moon crescent
 const mCv=document.createElement('canvas');mCv.width=mCv.height=128;
 const mX=mCv.getContext('2d');
 mX.beginPath();mX.arc(64,64,56,0,Math.PI*2);mX.fillStyle='#FFF6DC';mX.fill();
-mX.beginPath();mX.arc(85,50,42,0,Math.PI*2);mX.fillStyle='#1a1a2a';mX.fill();
+mX.beginPath();mX.arc(86,52,44,0,Math.PI*2);mX.fillStyle='#010108';mX.fill();
 const moonSp=new THREE.Sprite(new THREE.SpriteMaterial(
   {map:new THREE.CanvasTexture(mCv),transparent:true,opacity:0,depthWrite:false}));
-moonSp.scale.set(72,72,1);moonSp.position.set(-340,250,-700);
+moonSp.scale.set(80,80,1);moonSp.position.set(-500,350,-900);
 skyScene.add(moonSp);
 
-// ── Main scene ────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════
+// MAIN SCENE
+// ══════════════════════════════════════════════════════════════
 const scene=new THREE.Scene();
-scene.fog=new THREE.Fog(0x6FC3E8,32,130);
+scene.fog=new THREE.Fog(0x6FC3E8,35,140);
 
-// Orthographic camera — true isometric 3/4 view
-const FH=7.0;
+// Orthographic camera — slightly lower angle so horizon is visible
+const FH=7.2;
 function mkCam(){
   const a=innerWidth/innerHeight;
-  const c=new THREE.OrthographicCamera(-FH*a,FH*a,FH,-FH,0.1,500);
-  c.position.set(-12,16,12);c.lookAt(0,1.0,0);
+  const c=new THREE.OrthographicCamera(-FH*a,FH*a,FH,-FH,0.1,600);
+  // Position: left-rear-high → furgo morro (−Z) points north in scene
+  // Camera looks from right-front so we see front face + left side + top
+  c.position.set(14,11,14);
+  c.lookAt(0,0.8,0);
   return c;
 }
 const cam=mkCam();
@@ -124,8 +154,8 @@ const amb=new THREE.AmbientLight(0xffffff,0.26);scene.add(amb);
 const sun=new THREE.DirectionalLight(0xFFF8F0,0.80);
 sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);
 sun.shadow.camera.near=1;sun.shadow.camera.far=250;
-sun.shadow.camera.left=-55;sun.shadow.camera.right=55;
-sun.shadow.camera.top=55;sun.shadow.camera.bottom=-55;
+[-55,55].forEach(v=>{sun.shadow.camera.left=sun.shadow.camera.bottom=-55;
+  sun.shadow.camera.right=sun.shadow.camera.top=55;});
 sun.shadow.bias=-0.0008;
 scene.add(sun,sun.target);
 
@@ -134,27 +164,56 @@ const world=new THREE.Group();scene.add(world);
 
 // Ground
 const gndMat=new THREE.MeshLambertMaterial({color:0x7DB53A});
-const gnd=new THREE.Mesh(new THREE.PlaneGeometry(150,150),gndMat);
+const gnd=new THREE.Mesh(new THREE.PlaneGeometry(200,200),gndMat);
 gnd.rotation.x=-Math.PI/2;gnd.receiveShadow=true;world.add(gnd);
 
-// North marker
+// Horizon ring — thin torus flat on ground at far edge, picks up fog naturally
+const horizRing=new THREE.Mesh(
+  new THREE.TorusGeometry(55,0.18,4,80),
+  new THREE.MeshBasicMaterial({color:0x4a8a20,transparent:true,opacity:0.55})
+);
+horizRing.rotation.x=Math.PI/2;horizRing.position.y=0.04;
+world.add(horizRing);
+
+// ══════════════════════════════════════════════════════════════
+// NORTH ARROW — painted on ground, points −Z (north in scene)
+// Furgo morro also points −Z so they align
+// ══════════════════════════════════════════════════════════════
 {
-  const nc=new THREE.Mesh(new THREE.ConeGeometry(0.15,0.55,4),
-    new THREE.MeshLambertMaterial({color:0xE53935}));
-  nc.rotation.x=-Math.PI/2;nc.position.set(0,0.02,-7.5);world.add(nc);
-  const nv=document.createElement('canvas');nv.width=nv.height=64;
-  const nx=nv.getContext('2d');nx.font='bold 52px Arial';nx.fillStyle='#E53935';
-  nx.textAlign='center';nx.textBaseline='middle';nx.fillText('N',32,32);
-  const ns=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(nv),transparent:true}));
-  ns.scale.set(1,1,1);ns.position.set(0,0.68,-8.0);world.add(ns);
+  const cv=document.createElement('canvas');cv.width=512;cv.height=160;
+  const cx=cv.getContext('2d');
+  // Arrow pointing in +X of canvas → will be rotated so it points −Z in world
+  cx.fillStyle='rgba(0,0,0,0)';cx.fillRect(0,0,512,160);
+  cx.shadowColor='rgba(0,0,0,0.5)';cx.shadowBlur=6;
+  cx.fillStyle='#DD1F1F';
+  cx.fillRect(30,62,305,36);
+  cx.beginPath();cx.moveTo(335,8);cx.lineTo(492,80);cx.lineTo(335,152);cx.closePath();cx.fill();
+  cx.shadowBlur=0;
+  cx.font='bold 72px Arial';cx.fillStyle='#fff';cx.textAlign='center';cx.textBaseline='middle';
+  cx.fillText('N',430,80);
+
+  const mesh=new THREE.Mesh(
+    new THREE.PlaneGeometry(5.5,1.72),
+    new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(cv),
+      transparent:true,alphaTest:0.05,depthWrite:false})
+  );
+  // Flat on ground, arrow tip points toward -Z (north)
+  mesh.rotation.x=-Math.PI/2;
+  // Default PlaneGeometry +X → rotate so canvas +X points to scene −Z
+  mesh.rotation.z=Math.PI/2;   // now arrow points −Z
+  mesh.position.set(0,0.022,-3.8);   // just in front of morro
+  world.add(mesh);
 }
 
-// ═══════════════════════════════════════════════════════════════
-// CEL-SHADED CAMPER VAN
-// ═══════════════════════════════════════════════════════════════
-const van=new THREE.Group();world.add(van);
+// ══════════════════════════════════════════════════════════════
+// CEL-SHADED CAMPER VAN  — morro points −Z (north)
+// ══════════════════════════════════════════════════════════════
+const van=new THREE.Group();
+// Rotate van 90° so original −X front → now −Z front (north)
+van.rotation.y=Math.PI/2;
+world.add(van);
 
-// Toon gradient: 3 hard steps
+// Toon gradient
 const gCv=document.createElement('canvas');gCv.width=256;gCv.height=1;
 const gX=gCv.getContext('2d');
 gX.fillStyle='#3a3a3a';gX.fillRect(0,0,96,1);
@@ -163,136 +222,94 @@ gX.fillStyle='#ffffff';gX.fillRect(168,0,88,1);
 const gMap=new THREE.CanvasTexture(gCv);
 gMap.minFilter=gMap.magFilter=THREE.NearestFilter;
 
-// Palette
 const NAVY=0x1B2A4A,TERRA=0xB05228,WIN=0x8FB5C4,
-      INK=0x080808,AMBER=0xFFBC30,COBALT=0x1A3580,
-      RED=0xBB1000,CHROME=0x888888;
-
-// Shared outline material (BackSide = creates dark border around meshes)
+      INK=0x080808,AMBER=0xFFBC30,RED=0xBB1000,CHROME=0x888888;
 const OL=new THREE.MeshBasicMaterial({color:INK,side:THREE.BackSide});
 
-// Toon material factory
-function tm(col,off=0){
-  return new THREE.MeshToonMaterial({color:col,gradientMap:gMap,
-    ...(off?{polygonOffset:true,polygonOffsetFactor:-off,polygonOffsetUnits:-off}:{})});
-}
-// Box helper
-function bx(w,h,d,col,x,y,z,off=0,os=1.07){
+function tm(col){return new THREE.MeshToonMaterial({color:col,gradientMap:gMap});}
+function bx(w,h,d,col,x,y,z,polyOff=0,outScale=1.07){
   const g=new THREE.BoxGeometry(w,h,d);
-  const m=new THREE.Mesh(g,tm(col,off));
+  const m=new THREE.Mesh(g,Object.assign(tm(col),
+    polyOff?{polygonOffset:true,polygonOffsetFactor:-polyOff,polygonOffsetUnits:-polyOff}:{}));
   m.position.set(x,y,z);m.castShadow=true;m.receiveShadow=true;
-  if(os>0){const o=new THREE.Mesh(g,OL);o.scale.setScalar(os);o.castShadow=false;m.add(o);}
+  if(outScale>0){const o=new THREE.Mesh(g,OL);o.scale.setScalar(outScale);m.add(o);}
   van.add(m);return m;
 }
-// Cylinder helper (horizontal axis = wheel)
-function cy(r,h,s,col,x,y,z,os=1.08){
+function cy(r,h,s,col,x,y,z,outScale=1.08){
   const g=new THREE.CylinderGeometry(r,r,h,s);
   const m=new THREE.Mesh(g,tm(col));
   m.position.set(x,y,z);m.rotation.x=Math.PI/2;m.castShadow=true;
-  if(os>0){const o=new THREE.Mesh(g,OL);o.scale.setScalar(os);o.castShadow=false;m.add(o);}
+  if(outScale>0){const o=new THREE.Mesh(g,OL);o.scale.setScalar(outScale);m.add(o);}
   van.add(m);return m;
 }
 
-// ── Dimensions ────────────────────────────────────────────────
-// Front = -X, left visible side = +Z, top = +Y
-const VL=3.76, VH=1.60, VW=1.28;
-const VY0=0.52;               // body bottom
-const VYM=VY0+VH/2;          // body mid   = 1.32
-const VYT=VY0+VH;            // body top   = 2.12
-const VFX=-VL/2;              // body front face x = -1.88
-const VSZ=VW/2;               // body side z = 0.64
+const VL=3.76,VH=1.60,VW=1.28;
+const VY0=0.52,VYM=VY0+VH/2,VYT=VY0+VH;
+const VFX=-VL/2,VSZ=VW/2;
+const apW=(VW-0.88)/2,apZc=VSZ-apW/2;
+const wsBot=VYM+0.24-0.28,wsTop=VYM+0.24+0.28;
 
-// ── Main body (navy) ─────────────────────────────────────────
-bx(VL,VH,VW, NAVY, 0,VYM,0);
-
-// ── Front face — terracotta + windshield (polygonOffset stacking) ─
-// Geometry: lower strip | windshield + A-pillars | top strip
-// All at x=VFX, ultra-thin (0.018), offset pushes them in front of body face.
-const apW=(VW-0.88)/2;        // A-pillar width  = 0.20
-const apZc=VSZ-apW/2;         // A-pillar z center = 0.54
-const wsBot=VYM+0.24-0.28;    // windshield bottom y = 1.28
-const wsTop=VYM+0.24+0.28;    // windshield top    y = 1.84
-
-bx(0.018,wsBot-VY0, VW,      TERRA, VFX,  (VY0+wsBot)/2,    0,   1);   // lower strip
-bx(0.018,wsTop-wsBot,apW,    TERRA, VFX,  VYM+0.24,        -apZc,1.5); // left A-pillar
-bx(0.018,wsTop-wsBot,apW,    TERRA, VFX,  VYM+0.24,         apZc,1.5); // right A-pillar
-bx(0.018,wsTop-wsBot,0.88,   WIN,   VFX-0.005,VYM+0.24,     0,   2, 1.04); // windshield
-bx(0.018,VYT-wsTop,  VW,     TERRA, VFX,  (wsTop+VYT)/2,    0,   1);   // top strip
-
-// ── Headlights (amber, on front) ──────────────────────────────
-bx(0.07,0.14,0.20,AMBER, VFX-0.04, VYM+0.12,-0.42);
-bx(0.07,0.14,0.20,AMBER, VFX-0.04, VYM+0.12, 0.42);
-
-// ── Grille (terracotta, lower front) ──────────────────────────
-bx(0.06,0.24,0.66,TERRA, VFX-0.04, VY0+0.15, 0, 3);
-for(let i=0;i<3;i++)
-  bx(0.065,0.04,0.60,INK, VFX-0.045, VY0+0.06+i*0.09, 0, 5, 0);
-// Badge (small amber shape)
-bx(0.06,0.09,0.09,AMBER, VFX-0.045, VY0+0.24, 0, 6, 1.05);
-
-// ── Bumpers ───────────────────────────────────────────────────
-bx(0.10,0.16,VW*1.06, NAVY, VFX-0.09, VY0-0.02, 0);
-bx(0.10,0.16,VW*1.06, NAVY, -VFX+0.09, VY0-0.02, 0);
-
-// ── Rear lights ───────────────────────────────────────────────
-bx(0.055,0.22,0.18,RED, -VFX+0.04,VYM+0.14,-0.44);
-bx(0.055,0.22,0.18,RED, -VFX+0.04,VYM+0.14, 0.44);
-
-// ── Horizontal body panel line (+Z face) ─────────────────────
-bx(VL+0.06,0.025,0.032, 0x0A1220, 0,VY0+0.44,VSZ+0.018, 4, 0);
-
-// ── Sliding door (terracotta, +Z face, centre-front) ──────────
-bx(1.40,VH*0.95,0.055, TERRA, -0.30,VYM-0.01,VSZ+0.028);
-// Door handle (navy vertical bar)
-bx(0.042,0.30,0.07,NAVY, -0.30,VYM+0.06,VSZ+0.065, 3, 0);
-
-// ── Cab side window (+Z, front cab area) ──────────────────────
-bx(0.48,0.35,0.06,WIN, -1.42,VYM+0.27,VSZ+0.07, 2,1.04);
-
-// ── Body side windows (+Z face) ───────────────────────────────
-// Window on sliding door (front)
-bx(0.60,0.38,0.06,WIN, -0.60,VYM+0.30,VSZ+0.07, 2,1.04);
-// Mid body window
-bx(0.54,0.38,0.06,WIN,  0.44,VYM+0.30,VSZ+0.065, 2,1.04);
-// Rear body window
-bx(0.46,0.38,0.06,WIN,  1.22,VYM+0.30,VSZ+0.065, 2,1.04);
-
-// ── Roof base ─────────────────────────────────────────────────
-bx(VL,0.055,VW, NAVY, 0,VYT+0.027,0);
-
-// Cargo box (terracotta, rear roof)
-bx(1.30,0.28,1.06, TERRA, 0.95,VYT+0.168,0);
-
-// Solar panel frame (terracotta)
-bx(1.06,0.045,0.76, TERRA, -0.28,VYT+0.052,0);
-// Solar cells — canvas texture for cobalt grid
+// Main body
+bx(VL,VH,VW,NAVY,0,VYM,0);
+// Front face
+bx(0.018,wsBot-VY0,VW,TERRA,VFX,(VY0+wsBot)/2,0,1);
+bx(0.018,wsTop-wsBot,apW,TERRA,VFX,VYM+0.24,-apZc,1.5);
+bx(0.018,wsTop-wsBot,apW,TERRA,VFX,VYM+0.24, apZc,1.5);
+bx(0.018,wsTop-wsBot,0.88,WIN,VFX-0.005,VYM+0.24,0,2,1.04);
+bx(0.018,VYT-wsTop,VW,TERRA,VFX,(wsTop+VYT)/2,0,1);
+// Headlights
+bx(0.07,0.14,0.20,AMBER,VFX-0.04,VYM+0.12,-0.42);
+bx(0.07,0.14,0.20,AMBER,VFX-0.04,VYM+0.12, 0.42);
+// Grille
+bx(0.06,0.24,0.66,TERRA,VFX-0.04,VY0+0.15,0,3);
+for(let i=0;i<3;i++)bx(0.065,0.04,0.60,INK,VFX-0.045,VY0+0.06+i*0.09,0,5,0);
+bx(0.06,0.09,0.09,AMBER,VFX-0.045,VY0+0.24,0,6,1.05);
+// Bumpers
+bx(0.10,0.16,VW*1.06,NAVY,VFX-0.09,VY0-0.02,0);
+bx(0.10,0.16,VW*1.06,NAVY,-VFX+0.09,VY0-0.02,0);
+// Rear lights
+bx(0.055,0.22,0.18,RED,-VFX+0.04,VYM+0.14,-0.44);
+bx(0.055,0.22,0.18,RED,-VFX+0.04,VYM+0.14, 0.44);
+// Panel line
+bx(VL+0.06,0.025,0.032,0x0A1220,0,VY0+0.44,VSZ+0.018,4,0);
+// Sliding door
+bx(1.40,VH*0.95,0.055,TERRA,-0.30,VYM-0.01,VSZ+0.028);
+bx(0.042,0.30,0.07,NAVY,-0.30,VYM+0.06,VSZ+0.065,3,0);
+// Windows
+bx(0.48,0.35,0.06,WIN,-1.42,VYM+0.27,VSZ+0.07,2,1.04);
+bx(0.60,0.38,0.06,WIN,-0.60,VYM+0.30,VSZ+0.07,2,1.04);
+bx(0.54,0.38,0.06,WIN, 0.44,VYM+0.30,VSZ+0.065,2,1.04);
+bx(0.46,0.38,0.06,WIN, 1.22,VYM+0.30,VSZ+0.065,2,1.04);
+// Roof
+bx(VL,0.055,VW,NAVY,0,VYT+0.027,0);
+bx(1.30,0.28,1.06,TERRA,0.95,VYT+0.168,0);
+bx(1.06,0.045,0.76,TERRA,-0.28,VYT+0.052,0);
+// Solar panel
 {
   const sc=document.createElement('canvas');sc.width=210;sc.height=150;
   const sx=sc.getContext('2d');
   sx.fillStyle='#1A3580';sx.fillRect(0,0,210,150);
   sx.strokeStyle='#0A1A50';sx.lineWidth=2.5;
-  for(let gxi=0;gxi<=210;gxi+=42){sx.beginPath();sx.moveTo(gxi,0);sx.lineTo(gxi,150);sx.stroke();}
-  for(let gyi=0;gyi<=150;gyi+=30){sx.beginPath();sx.moveTo(0,gyi);sx.lineTo(210,gyi);sx.stroke();}
+  for(let xi=0;xi<=210;xi+=42){sx.beginPath();sx.moveTo(xi,0);sx.lineTo(xi,150);sx.stroke();}
+  for(let yi=0;yi<=150;yi+=30){sx.beginPath();sx.moveTo(0,yi);sx.lineTo(210,yi);sx.stroke();}
   const sm=new THREE.Mesh(new THREE.BoxGeometry(0.97,0.05,0.68),
     new THREE.MeshLambertMaterial({map:new THREE.CanvasTexture(sc)}));
-  sm.position.set(-0.28,VYT+0.058,0);sm.castShadow=false;van.add(sm);
+  sm.position.set(-0.28,VYT+0.058,0);van.add(sm);
 }
-
-// Skylight frame (navy) + glass (front-left of roof)
-bx(0.52,0.052,0.40,NAVY, -1.12,VYT+0.052,-0.22);
-bx(0.44,0.09, 0.33,WIN,  -1.12,VYT+0.090,-0.22, 0,1.04);
-
-// ── Wheels (tyre + terracotta hubcap + chrome bolt) ───────────
+// Skylight
+bx(0.52,0.052,0.40,NAVY,-1.12,VYT+0.052,-0.22);
+bx(0.44,0.09,0.33,WIN,-1.12,VYT+0.090,-0.22,0,1.04);
+// Wheels
 [[-1.1,-0.67],[-1.1,0.67],[0.9,-0.67],[0.9,0.67]].forEach(([x,z])=>{
-  cy(0.30,0.20,24,INK,   x,0.30,z);       // tyre
-  cy(0.19,0.22,16,TERRA, x,0.30,z);       // hubcap
-  cy(0.07,0.23,10,CHROME,x,0.30,z,0);     // centre bolt
-  bx(0.52,0.11,0.23,NAVY, x,0.60,z,0,1.06); // wheel arch
+  cy(0.30,0.20,24,INK,x,0.30,z);
+  cy(0.19,0.22,16,TERRA,x,0.30,z);
+  cy(0.07,0.23,10,CHROME,x,0.30,z,0);
+  bx(0.52,0.11,0.23,NAVY,x,0.60,z,0,1.06);
 });
 
-// ═══════════════════════════════════════════════════════════════
-// SOLAR POSITION (NOAA algorithm — unchanged)
-// ═══════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
+// SOLAR POSITION (NOAA)
+// ══════════════════════════════════════════════════════════════
 function getSolar(la,lo,mins){
   const d=new Date();d.setHours(Math.floor(mins/60),mins%60,0,0);
   const JD=d.getTime()/86400000+2440587.5;
@@ -307,7 +324,8 @@ function getSolar(la,lo,mins){
   const eps=(23.439291-T*(0.013004+T*1.64e-7)+0.00256*Math.cos(om*DEG))*DEG;
   const dec=Math.asin(Math.sin(eps)*Math.sin(lam*DEG));
   const y2=Math.tan(eps/2)**2,e=0.016708634,L0r=L0*DEG;
-  const EqT=4/DEG*(y2*Math.sin(2*L0r)-2*e*Math.sin(Mr)+4*e*y2*Math.sin(Mr)*Math.cos(2*L0r)
+  const EqT=4/DEG*(y2*Math.sin(2*L0r)-2*e*Math.sin(Mr)
+    +4*e*y2*Math.sin(Mr)*Math.cos(2*L0r)
     -0.5*y2*y2*Math.sin(4*L0r)-1.25*e*e*Math.sin(2*Mr));
   const utcM=(d.getUTCHours()*60+d.getUTCMinutes()+1440)%1440;
   const TST=(utcM+4*lo+EqT+1440)%1440;
@@ -322,17 +340,16 @@ function getSolar(la,lo,mins){
 const cl=(a,b,t)=>a+(b-a)*Math.max(0,Math.min(1,t));
 const lC=(a,b,t)=>new THREE.Color(a).lerp(new THREE.Color(b),Math.max(0,Math.min(1,t)));
 
-// ═══════════════════════════════════════════════════════════════
-// UPDATE SCENE
-// ═══════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
+// UPDATE
+// ══════════════════════════════════════════════════════════════
 function update(mins){
   const{alt,az}=getSolar(lat,lon,mins);
-  const azR=az*DEG,eR=Math.max(alt,2)*DEG,D=72;
+  const azR=az*DEG,eR=Math.max(alt,2)*DEG,D=75;
   sun.position.set(Math.sin(azR)*Math.cos(eR)*D,Math.sin(eR)*D,-Math.cos(azR)*Math.cos(eR)*D);
   sun.target.position.set(0,0,0);
 
   let ambI,sunI,sR,sG,sB,skyT,skyM,skyB,fogH,gndH,stOp=0,mnOp=0;
-
   if(alt>=18){
     ambI=0.26;sunI=0.80;sR=1;sG=0.97;sB=0.92;
     skyT=0x0D5A99;skyM=0x4AA8D4;skyB=0x80C8E8;
@@ -353,17 +370,18 @@ function update(mins){
     skyM=lC(0x05050E,0xE56A18,t).getHex();
     skyB=lC(0x08080F,0xFFCC80,t).getHex();
     fogH=0x060710;gndH=0x182808;
-    stOp=cl(0,0.90,1-t);mnOp=cl(0,0.88,1-t);
+    stOp=cl(0,0.92,1-t);mnOp=cl(0,0.88,1-t);
   } else {
     ambI=0.04;sunI=0;sR=1;sG=0.35;sB=0.08;
     skyT=0x010107;skyM=0x030310;skyB=0x06060F;
-    fogH=0x04040A;gndH=0x152208;stOp=0.92;mnOp=0.90;
+    fogH=0x04040A;gndH=0x152208;stOp=0.94;mnOp=0.90;
   }
 
   amb.intensity=ambI;sun.intensity=sunI;sun.color.setRGB(sR,sG,sB);
   scene.fog.color.setHex(fogH);gndMat.color.setHex(gndH);
   buildSky(skyT,skyM,skyB);
-  starMat.opacity=stOp;moonSp.material.opacity=mnOp;
+  starMat.uniforms.opacity.value=stOp;
+  moonSp.material.opacity=mnOp;
   clockEl.textContent=`${String(Math.floor(mins/60)).padStart(2,'0')}:${String(mins%60).padStart(2,'0')}`;
 }
 
@@ -377,23 +395,30 @@ if(navigator.geolocation){
     {enableHighAccuracy:true,timeout:15000});
 }else{statusEl.textContent='📍 Sin GPS — usando Madrid';statusEl.style.opacity='0.55';}
 
-// ── Compass ───────────────────────────────────────────────────
+// ── Compass — toggle ON/OFF ───────────────────────────────────
 function onOri(e){
   let h=null;
   if(e.webkitCompassHeading!=null)h=e.webkitCompassHeading;
   else if(e.absolute&&e.alpha!=null)h=(360-e.alpha+360)%360;
   if(h!=null)compassH=h;
 }
+function enableCompass(){
+  window.addEventListener('deviceorientationabsolute',onOri,true);
+  window.addEventListener('deviceorientation',onOri,true);
+  compassOn=true;cbtn.textContent='🧭 Brújula ON';cbtn.classList.add('on');
+}
+function disableCompass(){
+  window.removeEventListener('deviceorientationabsolute',onOri,true);
+  window.removeEventListener('deviceorientation',onOri,true);
+  compassOn=false;world.rotation.y=0;
+  cbtn.textContent='🧭 Brújula';cbtn.classList.remove('on');
+}
 cbtn.addEventListener('click',()=>{
-  const go=()=>{
-    window.addEventListener('deviceorientationabsolute',onOri,true);
-    window.addEventListener('deviceorientation',onOri,true);
-    compassOn=true;cbtn.textContent='🧭 Brújula ON';cbtn.classList.add('on');
-  };
+  if(compassOn){disableCompass();return;}
   if(typeof DeviceOrientationEvent!=='undefined'&&
      typeof DeviceOrientationEvent.requestPermission==='function')
-    DeviceOrientationEvent.requestPermission().then(r=>{if(r==='granted')go();});
-  else go();
+    DeviceOrientationEvent.requestPermission().then(r=>{if(r==='granted')enableCompass();});
+  else enableCompass();
 });
 
 // ── Slider & clock ────────────────────────────────────────────
