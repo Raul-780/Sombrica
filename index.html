@@ -36,7 +36,7 @@ canvas{display:block;position:fixed;top:0;left:0}
 <script>
 'use strict';
 const DEG=Math.PI/180;
-let lat=40.4168,lon=-3.7038,compassH=0,smoothH=0,lastDrag=0;
+let lat=40.4168,lon=-3.7038,lastDrag=0;
 
 const rng=document.getElementById('rng');
 const clockEl=document.getElementById('clock');
@@ -44,11 +44,6 @@ const statusEl=document.getElementById('status');
 const hint=document.getElementById('hint');
 const _n=new Date();
 rng.value=_n.getHours()*60+_n.getMinutes();
-
-function lerpAngle(a,b,t){
-  const d=((b-a+Math.PI*3)%(Math.PI*2))-Math.PI;
-  return a+d*t;
-}
 
 // ── Renderer ──────────────────────────────────────────────────
 const renderer=new THREE.WebGLRenderer({antialias:true});
@@ -304,29 +299,11 @@ if(navigator.geolocation){
     {enableHighAccuracy:true,timeout:15000});
 }else{statusEl.textContent='📍 Madrid (sin GPS)';statusEl.style.opacity='0.6';}
 
-// ── Brújula ───────────────────────────────────────────────────
-function onOri(e){
-  let h=null;
-  if(e.webkitCompassHeading!=null) h=e.webkitCompassHeading;
-  else if(e.absolute&&e.alpha!=null) h=(360-e.alpha+360)%360;
-  else if(e.alpha!=null) h=(360-e.alpha+360)%360;
-  if(h!=null) compassH=h;
+// ── Render loop ───────────────────────────────────────────────
+function loop(){
+  requestAnimationFrame(loop);
+  renderer.render(scene,cam);
 }
-function startCompass(){
-  window.addEventListener('deviceorientationabsolute',onOri,true);
-  window.addEventListener('deviceorientation',onOri,true);
-}
-if(typeof DeviceOrientationEvent!=='undefined'&&
-   typeof DeviceOrientationEvent.requestPermission==='function'){
-  statusEl.textContent='👆 Toca para activar la brújula';
-  document.addEventListener('pointerdown',function req(){
-    DeviceOrientationEvent.requestPermission()
-      .then(r=>{if(r==='granted')startCompass();}).catch(()=>startCompass());
-    document.removeEventListener('pointerdown',req);
-  },{once:true});
-}else{startCompass();}
-
-// ── Slider & reloj ────────────────────────────────────────────
 rng.addEventListener('pointerdown',()=>lastDrag=Date.now());
 rng.addEventListener('input',()=>{lastDrag=Date.now();hint.style.opacity='1';update(+rng.value);});
 clockEl.addEventListener('click',()=>{
@@ -350,8 +327,6 @@ window.addEventListener('resize',()=>{
 // ── Render loop ───────────────────────────────────────────────
 function loop(){
   requestAnimationFrame(loop);
-  smoothH=lerpAngle(smoothH,compassH*DEG,0.018);
-  world.rotation.y=smoothH;
   renderer.render(scene,cam);
 }
 update(+rng.value);
