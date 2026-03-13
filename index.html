@@ -82,7 +82,8 @@ function updateSkyCam(yawRad){
 // Cúpula cielo con colores por vértice
 const skyGeo=new THREE.SphereGeometry(1200,32,20);
 const skyDome=new THREE.Mesh(skyGeo,
-  new THREE.MeshBasicMaterial({side:THREE.BackSide,vertexColors:true}));
+  new THREE.MeshBasicMaterial({side:THREE.BackSide,vertexColors:true,depthWrite:false}));
+skyDome.renderOrder=0;
 skyScene.add(skyDome);
 
 function buildSky(topH,midH,botH){
@@ -116,7 +117,9 @@ const starMat=new THREE.ShaderMaterial({
   fragmentShader:`uniform float opacity;void main(){vec2 u=gl_PointCoord-.5;if(length(u)>.5)discard;float a=smoothstep(.5,.12,length(u))*opacity;gl_FragColor=vec4(.94,.95,1.,a);}`,
   transparent:true,depthWrite:false
 });
-skyScene.add(new THREE.Points(starGeo,starMat));
+const starPts=new THREE.Points(starGeo,starMat);
+starPts.renderOrder=2;starMat.depthTest=false;
+skyScene.add(starPts);
 
 // Luna creciente
 const mCv=document.createElement('canvas');mCv.width=mCv.height=128;
@@ -383,7 +386,12 @@ function onOri(e){
   if(e.webkitCompassHeading!=null) h=e.webkitCompassHeading;
   else if(e.absolute&&e.alpha!=null) h=(360-e.alpha+360)%360;
   else if(e.alpha!=null) h=(360-e.alpha+360)%360;
-  if(h!=null) compassH=h;
+  if(h!=null){
+    // Rechaza outliers: saltos >20° en un solo evento = ruido del sensor
+    const cur=smoothH/DEG;
+    const diff=Math.abs(((h-cur+540)%360)-180);
+    if(diff<20||compassH===0) compassH=h;
+  }
 }
 function startCompass(){
   window.addEventListener('deviceorientationabsolute',onOri,true);
@@ -424,7 +432,7 @@ window.addEventListener('resize',()=>{
 // ── Render loop ───────────────────────────────────────────────
 function loop(){
   requestAnimationFrame(loop);
-  smoothH=lerpAngle(smoothH,compassH*DEG,0.06);
+  smoothH=lerpAngle(smoothH,compassH*DEG,0.018);
   world.rotation.y=smoothH;
   // skyCam: rota en Y con la escena, pitch fijo mostrando horizonte
   updateSkyCam(smoothH);
