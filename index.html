@@ -94,20 +94,16 @@ const gnd=new THREE.Mesh(new THREE.PlaneGeometry(220,220),gndMat);
 gnd.rotation.x=-Math.PI/2;gnd.receiveShadow=true;
 world.add(gnd);
 
-// ── Flecha Norte 3D (geometría sólida, siempre visible) ───────
-// Grupo que rota con brújula, independiente de la furgo
+// ── Flecha Norte 3D — solo cono + sprite, apartada a un lado ──
 const nGroup=new THREE.Group();scene.add(nGroup);
 {
   const red=new THREE.MeshLambertMaterial({color:0xE53935});
-  const wht=new THREE.MeshLambertMaterial({color:0xffffff});
-  // Varilla base (blanca)
-  const shaft=new THREE.Mesh(new THREE.BoxGeometry(0.12,0.12,2.2),wht);
-  shaft.position.set(0,0.15,1.5);nGroup.add(shaft);
-  // Punta (cono rojo apuntando a -Z = norte visual)
-  const tip=new THREE.Mesh(new THREE.ConeGeometry(0.22,0.55,8),red);
-  tip.rotation.x=Math.PI/2; // cono apunta en -Z
-  tip.position.set(0,0.18,0.28);nGroup.add(tip);
-  // Letra N como sprite blanco sobre fondo rojo
+  // Cono apuntando -Z (norte), elevado del suelo, desplazado a la derecha
+  const tip=new THREE.Mesh(new THREE.ConeGeometry(0.28,0.70,8),red);
+  tip.rotation.x=Math.PI/2;
+  tip.position.set(3.5,0.60,0);
+  nGroup.add(tip);
+  // Sprite N sobre el cono
   const cv=document.createElement('canvas');cv.width=cv.height=128;
   const cx=cv.getContext('2d');
   cx.fillStyle='#E53935';cx.beginPath();cx.arc(64,64,60,0,Math.PI*2);cx.fill();
@@ -115,7 +111,7 @@ const nGroup=new THREE.Group();scene.add(nGroup);
   cx.textAlign='center';cx.textBaseline='middle';cx.fillText('N',64,64);
   const sp=new THREE.Sprite(new THREE.SpriteMaterial(
     {map:new THREE.CanvasTexture(cv),transparent:true}));
-  sp.scale.set(0.9,0.9,1);sp.position.set(0,0.85,0.28);
+  sp.scale.set(1.0,1.0,1);sp.position.set(3.5,1.40,0);
   nGroup.add(sp);
 }
 
@@ -360,7 +356,7 @@ window.addEventListener('resize',()=>{
 // ── Render loop ───────────────────────────────────────────────
 function loop(){
   requestAnimationFrame(loop);
-  smoothH=lerpAngle(smoothH,compassH*DEG,0.06);
+  smoothH=lerpAngle(smoothH,compassH*DEG,0.025);
   sunPivot.rotation.y=smoothH;
   nGroup.rotation.y=smoothH;
   renderer.render(scene,cam);
