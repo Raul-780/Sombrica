@@ -36,13 +36,19 @@ canvas{display:block;position:fixed;top:0;left:0}
 <script>
 'use strict';
 const DEG=Math.PI/180;
-let lat=40.4168,lon=-3.7038,compassH=0,lastDrag=0;
+let lat=40.4168,lon=-3.7038,compassH=0,smoothH=0,lastDrag=0;
 
 const rng=document.getElementById('rng');
 const clockEl=document.getElementById('clock');
 const statusEl=document.getElementById('status');
 const hint=document.getElementById('hint');
 const _n=new Date();rng.value=_n.getHours()*60+_n.getMinutes();
+
+// Suavizado angular (maneja wrap 0/360)
+function lerpAngle(a,b,t){
+  let d=((b-a+Math.PI*3)%(Math.PI*2))-Math.PI;
+  return a+d*t;
+}
 
 // ── Renderer ──────────────────────────────────────────────────
 const renderer=new THREE.WebGLRenderer({antialias:true});
@@ -55,11 +61,25 @@ renderer.toneMapping=THREE.NoToneMapping;
 document.body.appendChild(renderer.domElement);
 
 // ══════════════════════════════════════════════════════════════
-// SKY SCENE (sin niebla — estrellas siempre visibles)
+// SKY SCENE — cámara independiente, siempre mirando al horizonte
 // ══════════════════════════════════════════════════════════════
 const skyScene=new THREE.Scene();
-const skyCam=new THREE.PerspectiveCamera(55,innerWidth/innerHeight,0.1,3000);
+// skyCam es perspectiva fija: 10° sobre el horizonte, rota solo en Y
+const skyCam=new THREE.PerspectiveCamera(72,innerWidth/innerHeight,0.1,3000);
+skyCam.position.set(0,0,0);
 
+// Posición orbital del skyCam: igual que la main cam pero normalizada
+// Calculamos el quaternion base (solo pitch, sin yaw) mirando 18° sobre horizonte
+const SKY_PITCH=-18*DEG; // mirar ligeramente hacia arriba respecto al horizonte
+
+function updateSkyCam(yawRad){
+  // Euler: primero yaw (Y), luego pitch (X) — orden YXZ
+  skyCam.rotation.order='YXZ';
+  skyCam.rotation.y=yawRad+Math.PI; // +PI porque la cámara apunta en -Z
+  skyCam.rotation.x=SKY_PITCH;
+}
+
+// Cúpula cielo con colores por vértice
 const skyGeo=new THREE.SphereGeometry(1200,32,20);
 const skyDome=new THREE.Mesh(skyGeo,
   new THREE.MeshBasicMaterial({side:THREE.BackSide,vertexColors:true}));
@@ -78,14 +98,14 @@ function buildSky(topH,midH,botH){
   geo.attributes.color.needsUpdate=true;
 }
 
-// Estrellas con shader (tamaño variable por punto)
-const starN=1800,sPos=new Float32Array(starN*3),sSz=new Float32Array(starN);
+// Estrellas con shader (tamaño variable)
+const starN=2000,sPos=new Float32Array(starN*3),sSz=new Float32Array(starN);
 for(let i=0;i<starN;i++){
-  const th=Math.random()*Math.PI*2,ph=Math.random()*Math.PI*.50,r=1000;
+  const th=Math.random()*Math.PI*2,ph=Math.random()*Math.PI*0.55,r=1000;
   sPos[i*3  ]=r*Math.sin(ph)*Math.cos(th);
-  sPos[i*3+1]=r*Math.cos(ph)+40;
+  sPos[i*3+1]=r*Math.cos(ph)+20;
   sPos[i*3+2]=r*Math.sin(ph)*Math.sin(th);
-  sSz[i]=2.5+Math.random()*5.5;
+  sSz[i]=3.0+Math.random()*6.0;
 }
 const starGeo=new THREE.BufferGeometry();
 starGeo.setAttribute('position',new THREE.BufferAttribute(sPos,3));
@@ -93,7 +113,7 @@ starGeo.setAttribute('size',new THREE.BufferAttribute(sSz,1));
 const starMat=new THREE.ShaderMaterial({
   uniforms:{opacity:{value:0}},
   vertexShader:`attribute float size;void main(){gl_PointSize=size;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,
-  fragmentShader:`uniform float opacity;void main(){vec2 u=gl_PointCoord-.5;float r=length(u);if(r>.5)discard;float a=smoothstep(.5,.15,r)*opacity;gl_FragColor=vec4(.93,.94,1.,a);}`,
+  fragmentShader:`uniform float opacity;void main(){vec2 u=gl_PointCoord-.5;if(length(u)>.5)discard;float a=smoothstep(.5,.12,length(u))*opacity;gl_FragColor=vec4(.94,.95,1.,a);}`,
   transparent:true,depthWrite:false
 });
 skyScene.add(new THREE.Points(starGeo,starMat));
@@ -105,28 +125,25 @@ mX.beginPath();mX.arc(64,64,56,0,Math.PI*2);mX.fillStyle='#FFF6DC';mX.fill();
 mX.beginPath();mX.arc(88,52,45,0,Math.PI*2);mX.fillStyle='#010108';mX.fill();
 const moonSp=new THREE.Sprite(new THREE.SpriteMaterial(
   {map:new THREE.CanvasTexture(mCv),transparent:true,opacity:0,depthWrite:false}));
-moonSp.scale.set(80,80,1);moonSp.position.set(-500,350,-900);
+moonSp.scale.set(80,80,1);moonSp.position.set(-500,300,-900);
 skyScene.add(moonSp);
 
 // ══════════════════════════════════════════════════════════════
-// ESCENA PRINCIPAL
+// MAIN SCENE
 // ══════════════════════════════════════════════════════════════
 const scene=new THREE.Scene();
-scene.fog=new THREE.Fog(0x6FC3E8,38,155);
+scene.fog=new THREE.Fog(0x6FC3E8,40,160);
 
-// CÁMARA ORTOGRÁFICA — posición (-14,11,-14) → ve cara frontal (-Z mundo) y lado izquierdo (-X mundo)
-// Con van.rotation.y = -π/2: morro (local -X) → mundo -Z = norte solar ✓
 const FH=7.2;
 function mkCam(){
   const a=innerWidth/innerHeight;
   const c=new THREE.OrthographicCamera(-FH*a,FH*a,FH,-FH,0.1,600);
   c.position.set(-14,11,-14);
-  c.lookAt(0,0.8,0);
+  c.lookAt(0,1.0,0);
   return c;
 }
 const cam=mkCam();
 
-// Luces
 const amb=new THREE.AmbientLight(0xffffff,0.26);scene.add(amb);
 const sun=new THREE.DirectionalLight(0xFFF8F0,0.80);
 sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);
@@ -138,27 +155,22 @@ scene.add(sun,sun.target);
 
 const world=new THREE.Group();scene.add(world);
 
-// Suelo
 const gndMat=new THREE.MeshLambertMaterial({color:0x7DB53A});
 const gnd=new THREE.Mesh(new THREE.PlaneGeometry(220,220),gndMat);
-gnd.rotation.x=-Math.PI/2;gnd.receiveShadow=true;
-world.add(gnd);
+gnd.rotation.x=-Math.PI/2;gnd.receiveShadow=true;world.add(gnd);
 
 // ══════════════════════════════════════════════════════════════
-// FURGONETA V3D-1
-// van.rotation.y = -π/2 → morro(local -X) apunta a mundo -Z (norte)
-// Cámara en (-14,11,-14) ve: cara frontal (normal -Z) y lado izquierdo (normal -X)
+// FURGONETA V6 (restaurada) — van.rotation.y=-π/2 → morro al norte
 // ══════════════════════════════════════════════════════════════
-const NAVY=0x001F3F, TERRA=0xD2691E, WIN=0x808080,
-      INK=0x060606, AMBER=0xFFBF00, RED=0xFF4136,
-      COBALT=0x0074D9, DARK=0x111111, CHROME=0xB0B0B0;
+const NAVY=0x001F3F,TERRA=0xD2691E,WIN=0x8FB5C4,
+      INK=0x060606,AMBER=0xFFBF00,RED=0xFF4136,
+      COBALT=0x0074D9,CHROME=0xB0B0B0,DARK=0x111111;
 
-// Gradiente toon (3 pasos: sombra / medio / luz)
 const gCv=document.createElement('canvas');gCv.width=256;gCv.height=1;
-const gX2=gCv.getContext('2d');
-gX2.fillStyle='#242424';gX2.fillRect(0,0,88,1);
-gX2.fillStyle='#828282';gX2.fillRect(88,0,78,1);
-gX2.fillStyle='#ffffff';gX2.fillRect(166,0,90,1);
+const gX=gCv.getContext('2d');
+gX.fillStyle='#242424';gX.fillRect(0,0,88,1);
+gX.fillStyle='#828282';gX.fillRect(88,0,78,1);
+gX.fillStyle='#ffffff';gX.fillRect(166,0,90,1);
 const gMap=new THREE.CanvasTexture(gCv);
 gMap.minFilter=gMap.magFilter=THREE.NearestFilter;
 
@@ -180,99 +192,83 @@ function bx(w,h,d,col,x,y,z,pOff=0,oSc=1.055){
   van.add(m);return m;
 }
 
-// Proporciones V3D-1: L=5.5m→4.0u, W=2.2m→1.6u, H=2.8m→2.0u
-const VL=4.0, VW=1.60, VH=2.0;
-const VY0=0.52, VYM=VY0+VH/2, VYT=VY0+VH;
-const VFX=-VL/2, VBX=VL/2, VSZ=VW/2; // -2.0, 2.0, 0.8
+const VL=4.0,VW=1.60,VH=2.0;
+const VY0=0.52,VYM=VY0+VH/2,VYT=VY0+VH;
+const VFX=-VL/2,VBX=VL/2,VSZ=VW/2;
+const wsBot=VY0+0.60,wsTop=VYT-0.18;
+const wsH=wsTop-wsBot,apW=0.22,wsW=VW-2*apW;
 
-// ── CUERPO PRINCIPAL ──────────────────────────────────────────
-bx(VL,VH,VW, NAVY, 0,VYM,0);
-
-// ── CARA FRONTAL (x = VFX = -2.0, normal -X local) ───────────
-const wsBot=VY0+0.60, wsTop=VYT-0.18;
-const wsH=wsTop-wsBot, apW=0.22, wsW=VW-2*apW;
-
-bx(0.024,wsBot-VY0, VW,   TERRA, VFX,(VY0+wsBot)/2,0,  1);     // fascia inferior
-bx(0.024,VYT-wsTop, VW,   TERRA, VFX,(wsTop+VYT)/2,0,  1);     // franja superior
-bx(0.022,wsH, apW,  TERRA, VFX,(wsBot+wsTop)/2,-(VSZ-apW/2),1.5,0); // pilar-A izq
-bx(0.022,wsH, apW,  TERRA, VFX,(wsBot+wsTop)/2, (VSZ-apW/2),1.5,0); // pilar-A der
-bx(0.018,wsH, wsW,  WIN,   VFX-0.006,(wsBot+wsTop)/2,0, 2,1.03); // parabrisas
-
+// Cuerpo principal
+bx(VL,VH,VW,NAVY,0,VYM,0);
+// Cara frontal
+bx(0.024,wsBot-VY0,VW,   TERRA, VFX,(VY0+wsBot)/2,      0,  1);
+bx(0.024,VYT-wsTop,VW,   TERRA, VFX,(wsTop+VYT)/2,      0,  1);
+bx(0.022,wsH,apW,  TERRA, VFX,(wsBot+wsTop)/2,-(VSZ-apW/2),1.5,0);
+bx(0.022,wsH,apW,  TERRA, VFX,(wsBot+wsTop)/2, (VSZ-apW/2),1.5,0);
+bx(0.018,wsH,wsW,  WIN,   VFX-0.006,(wsBot+wsTop)/2,0,  2,1.03);
 // Faros
 [-0.50,0.50].forEach(z=>{
-  bx(0.048,0.24,0.34, WIN,   VFX-0.028,VY0+0.42,z, 3);         // aro gris
-  bx(0.052,0.18,0.27, AMBER, VFX-0.032,VY0+0.42,z, 4, 0);      // luz ámbar
+  bx(0.048,0.24,0.34,WIN,  VFX-0.028,VY0+0.42,z,3);
+  bx(0.052,0.18,0.27,AMBER,VFX-0.032,VY0+0.42,z,4,0);
 });
-// Parrilla + ranura + badge
-bx(0.042,0.32,0.78, TERRA, VFX-0.028,VY0+0.20,0, 3);
-bx(0.052,0.07,0.72, INK,   VFX-0.034,VY0+0.20,0, 5, 0);        // ranura
-bx(0.052,0.11,0.11, AMBER, VFX-0.034,VY0+0.31,0, 6, 1.04);     // badge llama
-// Parachoques delantero
-bx(0.26,0.22,VW+0.16, NAVY, VFX-0.15,VY0-0.09,0);
-
-// ── CARA TRASERA (x = VBX = +2.0) ────────────────────────────
+// Parrilla
+bx(0.042,0.32,0.78,TERRA,VFX-0.028,VY0+0.20,0,3);
+for(let i=0;i<3;i++)bx(0.052,0.07,0.72,INK,VFX-0.034,VY0+0.06+i*0.09,0,5,0);
+bx(0.052,0.11,0.11,AMBER,VFX-0.034,VY0+0.31,0,6,1.04);
+// Parachoques
+bx(0.26,0.22,VW+0.16,NAVY,VFX-0.15,VY0-0.09,0);
+bx(0.26,0.22,VW+0.16,NAVY,VBX+0.15,VY0-0.09,0);
+// Luces traseras
 [-1,1].forEach(s=>{
   const z=s*(VSZ-0.17);
-  bx(0.046,0.30,0.36, WIN,   VBX+0.026,VYT-0.28,z, 2);         // aro gris
-  bx(0.050,0.24,0.28, RED,   VBX+0.032,VYT-0.26,z, 3);         // rojo
-  bx(0.050,0.11,0.27, AMBER, VBX+0.032,VYT-0.53,z, 3);         // ámbar
+  bx(0.046,0.30,0.36,WIN,  VBX+0.026,VYT-0.28,z,2);
+  bx(0.050,0.24,0.28,RED,  VBX+0.032,VYT-0.26,z,3);
+  bx(0.050,0.11,0.27,AMBER,VBX+0.032,VYT-0.53,z,3);
 });
-bx(0.034,0.24,0.60, TERRA, VBX+0.024,VYM-0.38,0, 2, 1.04);     // matrícula terracota
-// Portabicicletas tubular
+// Matrícula
+bx(0.034,0.24,0.60,TERRA,VBX+0.024,VYM-0.38,0,2,1.04);
+// Portabicicletas
 const brX=VBX+0.18;
-bx(0.068,0.068,VW*0.82,TERRA,brX,VY0+1.22,0);                  // barra superior
-bx(0.068,0.068,VW*0.82,TERRA,brX,VY0+0.46,0);                  // barra inferior
+bx(0.068,0.068,VW*0.82,TERRA,brX,VY0+1.22,0);
+bx(0.068,0.068,VW*0.82,TERRA,brX,VY0+0.46,0);
 [-0.33,0.33].forEach(z=>{
-  bx(0.068,0.80,0.068,TERRA,brX,VY0+0.84,z);                   // montante vertical
-  bx(0.22, 0.068,0.068,TERRA,brX,VY0+0.56,z);                  // soporte bici
+  bx(0.068,0.80,0.068,TERRA,brX,VY0+0.84,z);
+  bx(0.22,0.068,0.068,TERRA,brX,VY0+0.56,z);
 });
-bx(0.26,0.22,VW+0.16,NAVY,VBX+0.15,VY0-0.09,0);                // parachoques trasero
-
-// ── LATERAL IZQUIERDO (z = +VSZ = +0.8, normal +Z local) ─────
-// Puerta corredera terracota
+// Línea panel lateral
+bx(VL+0.06,0.025,0.032,0x0A1220,0,VY0+0.44,VSZ+0.018,4,0);
+// Puerta corredera
 bx(1.65,VH*0.94,0.044,TERRA,-0.18,VYM+0.01,VSZ+0.026,1);
-// Ventana de puerta
 bx(0.80,0.48,0.050,WIN,-0.18,VYM+0.30,VSZ+0.054,2,1.03);
-// Tirador vertical (navy)
 bx(0.042,0.32,0.054,NAVY,0.50,VYM+0.06,VSZ+0.064,3,0);
-// Ventana cabina
+// Ventanas izquierda
 bx(0.54,0.44,0.044,WIN,VFX+0.56,VYM+0.33,VSZ+0.026,2,1.03);
-// Ventana trasera carrocería
 bx(0.56,0.44,0.044,WIN,1.20,VYM+0.33,VSZ+0.026,2,1.03);
-
-// ── LATERAL DERECHO (z = -VSZ = -0.8, oculto desde cámara) ───
-// Toldo enrollado (cilindro a lo largo del eje X)
+// Lateral derecho
 {
   const g=new THREE.CylinderGeometry(0.13,0.13,3.50,14);
   const m=new THREE.Mesh(g,tmat(TERRA));
-  m.rotation.z=Math.PI/2;
-  m.position.set(-0.06,VYT+0.01,-(VSZ+0.145));
+  m.rotation.z=Math.PI/2;m.position.set(-0.06,VYT+0.01,-(VSZ+0.145));
   m.castShadow=true;
   const o=new THREE.Mesh(g,OL);o.scale.setScalar(1.08);m.add(o);
   van.add(m);
   [-1.78,1.78].forEach(dx=>{
     const gc=new THREE.CylinderGeometry(0.135,0.135,0.04,14);
     const mc=new THREE.Mesh(gc,tmat(CHROME));
-    mc.rotation.z=Math.PI/2;
-    mc.position.set(-0.06+dx,VYT+0.01,-(VSZ+0.145));
+    mc.rotation.z=Math.PI/2;mc.position.set(-0.06+dx,VYT+0.01,-(VSZ+0.145));
     van.add(mc);
   });
 }
-// Ventana de servicio (marco terracota + vidrio)
 bx(0.74,0.50,0.036,TERRA,0.50,VYM+0.30,-(VSZ+0.018),1.5,0);
-bx(0.62,0.40,0.046,WIN,  0.50,VYM+0.30,-(VSZ+0.030),2,1.03);
-// Panel de servicios
+bx(0.62,0.40,0.046,WIN,0.50,VYM+0.30,-(VSZ+0.030),2,1.03);
 bx(0.50,0.38,0.046,TERRA,1.42,VYM-0.30,-(VSZ+0.028),2);
-[-0.12,0.12].forEach(dx=>
-  bx(0.034,0.12,0.12,CHROME,1.42+dx,VYM-0.30,-(VSZ+0.056),4,0));
-
-// ── TECHO ─────────────────────────────────────────────────────
-bx(VL,0.052,VW, NAVY, 0,VYT+0.028,0);
-// Caja de techo trasera
-bx(1.52,0.34,1.16,TERRA,1.10,VYT+0.196,0);
-// Marco panel solar
+[-0.12,0.12].forEach(dx=>bx(0.034,0.12,0.12,CHROME,1.42+dx,VYM-0.30,-(VSZ+0.056),4,0));
+// Techo
+bx(VL,0.052,VW,NAVY,0,VYT+0.028,0);
+// Caja de techo — REDUCIDA respecto a v6
+bx(0.90,0.22,1.00,TERRA,1.12,VYT+0.138,0);
+// Panel solar
 bx(1.20,0.046,0.92,TERRA,-0.22,VYT+0.046,0);
-// Células solares (canvas cobalt 4×2)
 {
   const sc=document.createElement('canvas');sc.width=240;sc.height=180;
   const sx=sc.getContext('2d');
@@ -284,31 +280,24 @@ bx(1.20,0.046,0.92,TERRA,-0.22,VYT+0.046,0);
     new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(sc)}));
   sm.position.set(-0.22,VYT+0.054,0);van.add(sm);
 }
-// Claraboya (marco terracota + vidrio elevado)
+// Claraboya
 bx(0.58,0.048,0.46,TERRA,-1.14,VYT+0.048,-0.22);
-bx(0.50,0.12, 0.38,WIN,  -1.14,VYT+0.100,-0.22,0,1.03);
-
-// ── RUEDAS ────────────────────────────────────────────────────
+bx(0.50,0.12,0.38,WIN,-1.14,VYT+0.100,-0.22,0,1.03);
+// Ruedas
 const wZ=VSZ+0.04;
 [[-1.20,-1],[-1.20,1],[1.14,-1],[1.14,1]].forEach(([ax,side])=>{
   const z=side*wZ;
-  // Neumático
   const tg=new THREE.CylinderGeometry(0.33,0.33,0.22,24);
-  const twm=new THREE.Mesh(tg,new THREE.MeshToonMaterial({color:DARK,gradientMap:gMap}));
-  twm.position.set(ax,0.35,z);twm.rotation.x=Math.PI/2;twm.castShadow=true;
-  const to=new THREE.Mesh(tg,OL);to.scale.setScalar(1.07);twm.add(to);
-  van.add(twm);
-  // Llanta terracota
+  const tw=new THREE.Mesh(tg,new THREE.MeshToonMaterial({color:DARK,gradientMap:gMap}));
+  tw.position.set(ax,0.35,z);tw.rotation.x=Math.PI/2;tw.castShadow=true;
+  const to=new THREE.Mesh(tg,OL);to.scale.setScalar(1.07);tw.add(to);van.add(tw);
   const rg=new THREE.CylinderGeometry(0.21,0.21,0.24,16);
-  const rwm=new THREE.Mesh(rg,new THREE.MeshToonMaterial({color:TERRA,gradientMap:gMap}));
-  rwm.position.set(ax,0.35,z);rwm.rotation.x=Math.PI/2;rwm.castShadow=true;
-  const ro=new THREE.Mesh(rg,OL);ro.scale.setScalar(1.06);rwm.add(ro);
-  van.add(rwm);
-  // Buje cromado
+  const rw=new THREE.Mesh(rg,new THREE.MeshToonMaterial({color:TERRA,gradientMap:gMap}));
+  rw.position.set(ax,0.35,z);rw.rotation.x=Math.PI/2;rw.castShadow=true;
+  const ro=new THREE.Mesh(rg,OL);ro.scale.setScalar(1.06);rw.add(ro);van.add(rw);
   const hg=new THREE.CylinderGeometry(0.07,0.07,0.26,10);
-  const hwm=new THREE.Mesh(hg,new THREE.MeshToonMaterial({color:CHROME,gradientMap:gMap}));
-  hwm.position.set(ax,0.35,z);hwm.rotation.x=Math.PI/2;van.add(hwm);
-  // Paso de rueda (navy)
+  const hw=new THREE.Mesh(hg,new THREE.MeshToonMaterial({color:CHROME,gradientMap:gMap}));
+  hw.position.set(ax,0.35,z);hw.rotation.x=Math.PI/2;van.add(hw);
   bx(0.62,0.17,0.32,NAVY,ax,0.73,z,0,1.05);
 });
 
@@ -341,7 +330,6 @@ function getSolar(la,lo,mins){
   let az=Math.acos(Math.max(-1,Math.min(1,cAz)));if(HA>0)az=Math.PI*2-az;
   return{alt:alt/DEG,az:az/DEG};
 }
-
 const cl=(a,b,t)=>a+(b-a)*Math.max(0,Math.min(1,t));
 const lC=(a,b,t)=>new THREE.Color(a).lerp(new THREE.Color(b),Math.max(0,Math.min(1,t)));
 
@@ -350,33 +338,26 @@ function update(mins){
   const azR=az*DEG,eR=Math.max(alt,2)*DEG,D=78;
   sun.position.set(Math.sin(azR)*Math.cos(eR)*D,Math.sin(eR)*D,-Math.cos(azR)*Math.cos(eR)*D);
   sun.target.position.set(0,0,0);
-
   let ambI,sunI,sR,sG,sB,skyT,skyM,skyB,fogH,gndH,stOp=0,mnOp=0;
   if(alt>=18){
     ambI=0.26;sunI=0.80;sR=1;sG=0.97;sB=0.92;
-    skyT=0x0D5A99;skyM=0x4AA8D4;skyB=0x80C8E8;
-    fogH=0x7DBFE0;gndH=0x7DB53A;
+    skyT=0x0D5A99;skyM=0x4AA8D4;skyB=0x80C8E8;fogH=0x7DBFE0;gndH=0x7DB53A;
   } else if(alt>=0){
     const t=alt/18;
-    ambI=cl(0.09,0.26,t);sunI=cl(0.14,0.80,t);
-    sR=1;sG=cl(0.40,0.97,t);sB=cl(0.06,0.92,t);
-    skyT=lC(0xAA3A0E,0x0D5A99,t).getHex();
-    skyM=lC(0xE56A18,0x4AA8D4,t).getHex();
-    skyB=lC(0xFFCC80,0x80C8E8,t).getHex();
-    fogH=lC(0xDDA040,0x7DBFE0,t).getHex();
+    ambI=cl(0.09,0.26,t);sunI=cl(0.14,0.80,t);sR=1;sG=cl(0.40,0.97,t);sB=cl(0.06,0.92,t);
+    skyT=lC(0xAA3A0E,0x0D5A99,t).getHex();skyM=lC(0xE56A18,0x4AA8D4,t).getHex();
+    skyB=lC(0xFFCC80,0x80C8E8,t).getHex();fogH=lC(0xDDA040,0x7DBFE0,t).getHex();
     gndH=lC(0x182808,0x7DB53A,t).getHex();
   } else if(alt>=-8){
     const t=(alt+8)/8;
     ambI=cl(0.04,0.09,t);sunI=0;sR=1;sG=0.40;sB=0.08;
-    skyT=lC(0x020208,0xAA3A0E,t).getHex();
-    skyM=lC(0x05050E,0xE56A18,t).getHex();
-    skyB=lC(0x08080F,0xFFCC80,t).getHex();
-    fogH=0x060710;gndH=0x182808;
+    skyT=lC(0x020208,0xAA3A0E,t).getHex();skyM=lC(0x05050E,0xE56A18,t).getHex();
+    skyB=lC(0x08080F,0xFFCC80,t).getHex();fogH=0x060710;gndH=0x182808;
     stOp=cl(0,0.93,1-t);mnOp=cl(0,0.88,1-t);
   } else {
     ambI=0.04;sunI=0;sR=1;sG=0.35;sB=0.08;
-    skyT=0x010107;skyM=0x030310;skyB=0x06060F;
-    fogH=0x04040A;gndH=0x152208;stOp=0.95;mnOp=0.90;
+    skyT=0x010107;skyM=0x030310;skyB=0x06060F;fogH=0x04040A;gndH=0x152208;
+    stOp=0.95;mnOp=0.90;
   }
   amb.intensity=ambI;sun.intensity=sunI;sun.color.setRGB(sR,sG,sB);
   scene.fog.color.setHex(fogH);gndMat.color.setHex(gndH);
@@ -391,13 +372,12 @@ if(navigator.geolocation){
   navigator.geolocation.watchPosition(
     p=>{lat=p.coords.latitude;lon=p.coords.longitude;
       statusEl.textContent=`📍 ${lat.toFixed(3)}°, ${lon.toFixed(3)}°`;
-      setTimeout(()=>statusEl.style.opacity='0',5000);
-      update(+rng.value);},
+      setTimeout(()=>statusEl.style.opacity='0',5000);update(+rng.value);},
     ()=>{statusEl.textContent='📍 Madrid (sin GPS)';statusEl.style.opacity='0.6';},
     {enableHighAccuracy:true,timeout:15000});
 }else{statusEl.textContent='📍 Madrid (sin GPS)';statusEl.style.opacity='0.6';}
 
-// ── BRÚJULA — siempre activa ───────────────────────────────────
+// ── Brújula siempre activa ────────────────────────────────────
 function onOri(e){
   let h=null;
   if(e.webkitCompassHeading!=null) h=e.webkitCompassHeading;
@@ -409,19 +389,15 @@ function startCompass(){
   window.addEventListener('deviceorientationabsolute',onOri,true);
   window.addEventListener('deviceorientation',onOri,true);
 }
-// iOS 13+: necesita gesto del usuario para requestPermission
 if(typeof DeviceOrientationEvent!=='undefined'&&
    typeof DeviceOrientationEvent.requestPermission==='function'){
-  statusEl.textContent='👆 Toca la pantalla para activar brújula';
+  statusEl.textContent='👆 Toca para activar la brújula';
   document.addEventListener('pointerdown',function req(){
     DeviceOrientationEvent.requestPermission()
-      .then(r=>{if(r==='granted')startCompass();})
-      .catch(()=>startCompass());
+      .then(r=>{if(r==='granted')startCompass();}).catch(()=>startCompass());
     document.removeEventListener('pointerdown',req);
   },{once:true});
-}else{
-  startCompass(); // Android, Chrome, Brave, etc.
-}
+}else{startCompass();}
 
 // ── Slider & reloj ────────────────────────────────────────────
 rng.addEventListener('pointerdown',()=>lastDrag=Date.now());
@@ -448,8 +424,10 @@ window.addEventListener('resize',()=>{
 // ── Render loop ───────────────────────────────────────────────
 function loop(){
   requestAnimationFrame(loop);
-  world.rotation.y=compassH*DEG;
-  skyCam.quaternion.copy(cam.quaternion);
+  smoothH=lerpAngle(smoothH,compassH*DEG,0.06);
+  world.rotation.y=smoothH;
+  // skyCam: rota en Y con la escena, pitch fijo mostrando horizonte
+  updateSkyCam(smoothH);
   renderer.clear();
   renderer.render(skyScene,skyCam);
   renderer.clearDepth();
