@@ -308,25 +308,29 @@ if(navigator.geolocation){
 }else{statusEl.textContent='📍 Madrid (sin GPS)';statusEl.style.opacity='0.6';}
 
 // ── Brújula ───────────────────────────────────────────────────
-// Brújula — media móvil de 12 lecturas para eliminar saltos
+// Brújula — solo un evento para evitar conflictos
 const headBuf=[];const HEAD_N=30;
 function onOri(e){
   let h=null;
   if(e.webkitCompassHeading!=null) h=e.webkitCompassHeading;
-  else if(e.absolute&&e.alpha!=null) h=(360-e.alpha+360)%360;
   else if(e.alpha!=null) h=(360-e.alpha+360)%360;
   if(h==null) return;
   headBuf.push(h);
   if(headBuf.length>HEAD_N) headBuf.shift();
-  // Media circular (evita problema 359°→1°)
   let sx=0,sy=0;
   headBuf.forEach(a=>{sx+=Math.cos(a*DEG);sy+=Math.sin(a*DEG);});
   compassH=(Math.atan2(sy,sx)/DEG+360)%360;
   statusEl.textContent=`📍 ${lat.toFixed(3)}°, ${lon.toFixed(3)}° · 🧭 ${Math.round(compassH)}°`;
 }
 function startCompass(){
-  window.addEventListener('deviceorientationabsolute',onOri,true);
-  window.addEventListener('deviceorientation',onOri,true);
+  // Preferir absolute; si llega, ignorar el no-absolute
+  let hasAbsolute=false;
+  window.addEventListener('deviceorientationabsolute',e=>{
+    hasAbsolute=true; onOri(e);
+  },true);
+  window.addEventListener('deviceorientation',e=>{
+    if(!hasAbsolute) onOri(e);
+  },true);
 }
 if(typeof DeviceOrientationEvent!=='undefined'&&
    typeof DeviceOrientationEvent.requestPermission==='function'){
@@ -364,7 +368,7 @@ function loop(){
   requestAnimationFrame(loop);
   smoothH=lerpAngle(smoothH,compassH*DEG,0.008);
   sunPivot.rotation.y=smoothH;
-  nGroup.rotation.y=smoothH;
+  // nGroup NO rota — siempre apunta al norte del mundo
   renderer.render(scene,cam);
 }
 update(+rng.value);
