@@ -98,9 +98,9 @@ world.add(gnd);
 const nGroup=new THREE.Group();scene.add(nGroup);
 {
   const red=new THREE.MeshLambertMaterial({color:0xE53935});
-  // Cono apuntando -Z (norte), elevado del suelo, desplazado a la derecha
+// Cono apuntando +X (hacia fuera desde el centro)
   const tip=new THREE.Mesh(new THREE.ConeGeometry(0.28,0.70,8),red);
-  tip.rotation.x=Math.PI/2;
+  tip.rotation.z=-Math.PI/2;
   tip.position.set(3.5,0.60,0);
   nGroup.add(tip);
   // Sprite N sobre el cono
@@ -301,22 +301,28 @@ if(navigator.geolocation){
   navigator.geolocation.watchPosition(
     p=>{lat=p.coords.latitude;lon=p.coords.longitude;
       statusEl.textContent=`📍 ${lat.toFixed(3)}°, ${lon.toFixed(3)}°`;
-      setTimeout(()=>statusEl.style.opacity='0',5000);update(+rng.value);},
-    ()=>{statusEl.textContent='📍 Madrid (sin GPS)';statusEl.style.opacity='0.6';},
+      statusEl.style.opacity='1';
+      update(+rng.value);},
+    ()=>{statusEl.textContent='📍 Madrid (sin GPS)';statusEl.style.opacity='1';},
     {enableHighAccuracy:true,timeout:15000});
 }else{statusEl.textContent='📍 Madrid (sin GPS)';statusEl.style.opacity='0.6';}
 
 // ── Brújula ───────────────────────────────────────────────────
+// Brújula — media móvil de 12 lecturas para eliminar saltos
+const headBuf=[];const HEAD_N=12;
 function onOri(e){
   let h=null;
   if(e.webkitCompassHeading!=null) h=e.webkitCompassHeading;
   else if(e.absolute&&e.alpha!=null) h=(360-e.alpha+360)%360;
   else if(e.alpha!=null) h=(360-e.alpha+360)%360;
-  if(h!=null){
-    compassH=h;
-    statusEl.textContent=`🧭 ${Math.round(h)}°`;
-    setTimeout(()=>statusEl.style.opacity='0',2000);
-  }
+  if(h==null) return;
+  headBuf.push(h);
+  if(headBuf.length>HEAD_N) headBuf.shift();
+  // Media circular (evita problema 359°→1°)
+  let sx=0,sy=0;
+  headBuf.forEach(a=>{sx+=Math.cos(a*DEG);sy+=Math.sin(a*DEG);});
+  compassH=(Math.atan2(sy,sx)/DEG+360)%360;
+  statusEl.textContent=`📍 ${lat.toFixed(3)}°, ${lon.toFixed(3)}° · 🧭 ${Math.round(compassH)}°`;
 }
 function startCompass(){
   window.addEventListener('deviceorientationabsolute',onOri,true);
