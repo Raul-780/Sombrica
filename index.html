@@ -36,7 +36,7 @@ canvas{display:block;position:fixed;top:0;left:0}
 <script>
 'use strict';
 const DEG=Math.PI/180;
-let lat=40.4168,lon=-3.7038,lastDrag=0;
+let lat=40.4168,lon=-3.7038,compassH=0,smoothH=0,lastDrag=0;
 
 const rng=document.getElementById('rng');
 const clockEl=document.getElementById('clock');
@@ -69,6 +69,10 @@ function mkCam(){
 const cam=mkCam();
 
 const amb=new THREE.AmbientLight(0xffffff,0.26);scene.add(amb);
+
+// sunPivot rota con la brújula → sombra gira sin mover la furgo
+const sunPivot=new THREE.Group();scene.add(sunPivot);
+
 const sun=new THREE.DirectionalLight(0xFFF8F0,0.80);
 sun.castShadow=true;
 sun.shadow.mapSize.set(2048,2048);
@@ -76,7 +80,7 @@ sun.shadow.camera.near=1;sun.shadow.camera.far=260;
 sun.shadow.camera.left=sun.shadow.camera.bottom=-65;
 sun.shadow.camera.right=sun.shadow.camera.top=65;
 sun.shadow.bias=-0.0008;
-scene.add(sun,sun.target);
+sunPivot.add(sun);sunPivot.add(sun.target);
 
 const world=new THREE.Group();scene.add(world);
 
@@ -302,6 +306,9 @@ if(navigator.geolocation){
 // ── Render loop ───────────────────────────────────────────────
 function loop(){
   requestAnimationFrame(loop);
+  smoothH=lerpAngle(smoothH,compassH*DEG,0.06);
+  sunPivot.rotation.y=smoothH;   // sombra gira con el móvil
+  nArrow.rotation.y=smoothH;     // flecha N apunta siempre al norte real
   renderer.render(scene,cam);
 }
 rng.addEventListener('pointerdown',()=>lastDrag=Date.now());
