@@ -1,100 +1,4 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
-<title>Sombrica</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{overflow:hidden;font-family:Arial,sans-serif}
-canvas{display:block;position:fixed;top:0;left:0}
-#hud{position:fixed;bottom:0;left:0;right:0;padding:14px 24px 44px;
-  background:linear-gradient(transparent,rgba(0,0,0,.6));z-index:10;pointer-events:none}
-#hud>*{pointer-events:auto}
-#clock{text-align:center;color:#fff;font-size:34px;font-weight:700;letter-spacing:6px;
-  text-shadow:0 2px 14px rgba(0,0,0,.95);margin-bottom:16px;cursor:pointer;
-  font-variant-numeric:tabular-nums;user-select:none;-webkit-user-select:none}
-#rng{width:100%;-webkit-appearance:none;appearance:none;height:6px;border-radius:3px;
-  background:rgba(255,255,255,.3);outline:none;cursor:pointer}
-#rng::-webkit-slider-thumb{-webkit-appearance:none;width:30px;height:30px;
-  border-radius:50%;background:#fff;box-shadow:0 2px 14px rgba(0,0,0,.6);cursor:pointer}
-#status{position:fixed;top:14px;left:14px;color:rgba(255,255,255,.92);font-size:11px;
-  text-shadow:0 1px 6px rgba(0,0,0,.9);z-index:10;line-height:1.9;pointer-events:none}
-#hint{position:fixed;bottom:112px;left:50%;transform:translateX(-50%);
-  color:rgba(255,255,255,.45);font-size:10px;z-index:10;pointer-events:none;
-  opacity:0;transition:opacity .6s;white-space:nowrap}
-#compass{position:fixed;top:14px;right:14px;width:52px;height:52px;z-index:20}
-</style>
-</head>
-<body>
-<div id="status">📍 Iniciando…</div>
-
-<!-- Brújula 2D: aguja roja apunta al norte real -->
-<div id="compass">
-  <svg id="compass2d" viewBox="0 0 52 52"
-    style="width:52px;height:52px;transform-origin:center;transition:transform 0.15s linear">
-    <circle cx="26" cy="26" r="24" fill="rgba(0,0,0,0.45)" stroke="rgba(255,255,255,0.3)" stroke-width="1.5"/>
-    <polygon points="26,5 30,26 26,22 22,26" fill="#E53935"/>
-    <polygon points="26,47 30,26 26,30 22,26" fill="rgba(255,255,255,0.7)"/>
-    <circle cx="26" cy="26" r="3" fill="white"/>
-    <text x="26" y="15" text-anchor="middle" font-size="7" font-weight="bold" fill="white" font-family="Arial">N</text>
-  </svg>
-</div>
-
-<div id="hud">
-  <div id="clock">--:--</div>
-  <input type="range" id="rng" min="0" max="1439" step="1">
-</div>
-<div id="hint">Toca la hora para volver al presente</div>
-
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-<script>
-'use strict';
-const DEG=Math.PI/180;
-let lat=40.4168,lon=-3.7038,compassH=0,smoothH=0,lastDrag=0;
-
-const rng=document.getElementById('rng');
-const clockEl=document.getElementById('clock');
-const statusEl=document.getElementById('status');
-const hint=document.getElementById('hint');
-const compass2d=document.getElementById('compass2d');
-
-const now=new Date();
-rng.value=now.getHours()*60+now.getMinutes();
-
-function lerpAngle(a,b,t){
-  const d=((b-a+Math.PI*3)%(Math.PI*2))-Math.PI;
-  return a+d*t;
-}
-
-// ── Renderer ──────────────────────────────────────────────────
-const renderer=new THREE.WebGLRenderer({antialias:true});
-renderer.setSize(innerWidth,innerHeight);
-renderer.setPixelRatio(Math.min(devicePixelRatio,2));
-renderer.shadowMap.enabled=true;
-renderer.shadowMap.type=THREE.PCFSoftShadowMap;
-renderer.toneMapping=THREE.NoToneMapping;
-document.body.appendChild(renderer.domElement);
-
-// ── Escena ────────────────────────────────────────────────────
-const scene=new THREE.Scene();
-scene.fog=new THREE.Fog(0x6FC3E8,40,160);
-
-const FH=7.2;
-function mkCam(){
-  const a=innerWidth/innerHeight;
-  const c=new THREE.OrthographicCamera(-FH*a,FH*a,FH,-FH,0.1,600);
-  c.position.set(-14,11,-14);
-  c.lookAt(0,1.0,0);
-  return c;
-}
-const cam=mkCam();
-
-const amb=new THREE.AmbientLight(0xffffff,0.26);scene.add(amb);
-
-// sunPivot rota con la brújula → sombra correcta
-const sunPivot=new THREE.Group();scene.add(sunPivot);
-const sun=new THREE.DirectionalLight(0xFFF8F0,0.80);
+ectionalLight(0xFFF8F0,0.80);
 sun.castShadow=true;
 sun.shadow.mapSize.set(2048,2048);
 sun.shadow.camera.near=1;sun.shadow.camera.far=260;
@@ -355,7 +259,7 @@ window.addEventListener('resize',()=>{
 function loop(){
   requestAnimationFrame(loop);
   smoothH=lerpAngle(smoothH,compassH*DEG,0.008);
-  sunPivot.rotation.y=smoothH;
+  sunPivot.rotation.y=-smoothH;
   // Brújula 2D: rota en sentido contrario al heading → aguja apunta norte real
   compass2d.style.transform=`rotate(${-compassH}deg)`;
   renderer.render(scene,cam);
@@ -364,4 +268,3 @@ update(+rng.value);
 loop();
 </script>
 </body>
-</html>
