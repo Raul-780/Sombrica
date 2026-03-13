@@ -309,7 +309,7 @@ if(navigator.geolocation){
 
 // ── Brújula ───────────────────────────────────────────────────
 // Brújula — media móvil de 12 lecturas para eliminar saltos
-const headBuf=[];const HEAD_N=12;
+const headBuf=[];const HEAD_N=30;
 function onOri(e){
   let h=null;
   if(e.webkitCompassHeading!=null) h=e.webkitCompassHeading;
@@ -362,7 +362,7 @@ window.addEventListener('resize',()=>{
 // ── Render loop ───────────────────────────────────────────────
 function loop(){
   requestAnimationFrame(loop);
-  smoothH=lerpAngle(smoothH,compassH*DEG,0.025);
+  smoothH=lerpAngle(smoothH,compassH*DEG,0.008);
   sunPivot.rotation.y=smoothH;
   nGroup.rotation.y=smoothH;
   renderer.render(scene,cam);
